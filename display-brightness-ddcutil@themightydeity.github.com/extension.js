@@ -118,8 +118,9 @@ function spawnWithCallback(argv, callback) {
 const SliderMenuItem = GObject.registerClass({
     GType: 'SliderMenuItem'
 }, class SliderMenuItem extends PopupMenu.PopupMenuItem {
-    _init(slider) {
-        super._init("");
+    _init(slider, icon) {
+        super._init(icon);
+        this.style_class = 'popup-menu-item popup-menu-item-large';
         this.add_child(slider);
     }
 });
@@ -141,24 +142,42 @@ const SliderPanelMenuButton = GObject.registerClass({
 });
 
 class SliderItem extends PopupMenu.PopupMenuSection {
-    constructor(displayName, currentValue, onSliderChange) {
+    constructor(displayName, currentValue, onSliderChange, showLabel, vcpType) {
         super();
         this._timer = null
         this._displayName = displayName
         this._currentValue = currentValue
         this._onSliderChange = onSliderChange
+        this._showLabel = showLabel;
+        this._vcpType = vcpType;
         this._init();
     }
     _init() {
-        this.NameContainer = new PopupMenu.PopupMenuItem(this._displayName, { hover: false, reactive: false, can_focus: false });
+        let icon = '';
+        switch(this._vcpType){
+            case "10":
+                icon = "";
+                break;
+            case "12":
+                icon = "";
+                break;
+            case "62":
+                icon = "墳";
+                break;
+            default: 
+                break;
+        }
 
         this.ValueSlider = new Slider.Slider(this._currentValue);
         this.ValueSlider.connect('notify::value', Lang.bind(this, this._SliderChange));
 
-        this.SliderContainer = new SliderMenuItem(this.ValueSlider);
+        this.SliderContainer = new SliderMenuItem(this.ValueSlider, icon);
 
-        // add Slider to it
-        this.addMenuItem(this.NameContainer);
+        // add Slider to it        
+        if(this._showLabel){
+            this.NameContainer = new PopupMenu.PopupMenuItem(this._displayName, { hover: false, reactive: false, can_focus: false });
+            this.addMenuItem(this.NameContainer);        
+        }
         this.addMenuItem(this.SliderContainer);
         this.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
     }
@@ -174,24 +193,26 @@ class SliderItem extends PopupMenu.PopupMenuSection {
     }
 }
 
-function setBrightness(display, newValue) {
+function setBrightness(display, newValue, vcpType) {
     let newBrightness = parseInt((newValue / 100) * display.max);
     if (newBrightness <= minBrightnessThreshold) {
         newBrightness = minBrightness;
     }
     //log(display.name, newValue, newBrightness)
-    GLib.spawn_command_line_async(`${ddcutil_path} setvcp 10 ${newBrightness} --bus ${display.bus}`)
+    GLib.spawn_command_line_async(`${ddcutil_path} setvcp ${vcpType} ${newBrightness} --bus ${display.bus}`)
 }
 
-function addDisplayToPanel(display, panel, display_count) {
+function addDisplayToPanel(display, panel, display_count, showLabel, vcpType) {
     if (display_count == 1) {
         //remove all text info before adding first display
         panel.removeAllMenu()
     }
+
     let onSliderChange = function(newValue) {
-        setBrightness(display, newValue)
+        setBrightness(display, newValue, vcpType)
     };
-    let displaySlider = new SliderItem(display.name, display.current, onSliderChange)
+
+    let displaySlider = new SliderItem(display.name, display.current, onSliderChange, showLabel, vcpType)
     panel.addMenuItem(displaySlider);
 }
 
@@ -203,7 +224,7 @@ function addTextItemToPanel(text, panel) {
 }
 
 function parseDisplaysInfoAndAddToPanel(ddcutil_brief_info, panel) {
-    try {
+    try {        
         let displays = [];
         let display_names = [];
         ddcutil_brief_info.split('\n').map(ddc_line => {
@@ -213,23 +234,72 @@ function parseDisplaysInfoAndAddToPanel(ddcutil_brief_info, panel) {
                 /* read the current and max brightness using getvcp 10 */
                 spawnWithCallback([ddcutil_path, "getvcp", "--brief", "10", "--bus", display_bus], function(vcpInfos) {
                     let display = {};
+
                     let ddc_supported = true;
                     if (vcpInfos.indexOf("DDC communication failed") !== -1) {
                         ddc_supported = false;
                     } else {
                         ddc_supported = true;
                     }
+
                     let vcpInfosArray = vcpInfos.trim().split(" ");
                     let maxBrightness = vcpInfosArray[4];
+
                     /* we need current brightness in the scale of 0 to 1 for slider*/
                     let currentBrightness = vcpInfosArray[3] / vcpInfosArray[4];
-
+                
                     /* make display object */
-                    display = { "bus": display_bus, "max": maxBrightness, "current": currentBrightness, "supported": ddc_supported, "name": display_names[displays.length] };
+                    display = { "bus": display_bus, "max": maxBrightness, "current": currentBrightness, "supported": ddc_supported, "name": display_names[displays.length]};
+                    global.log('DISPLAY: ' + display.name + ' 10');
                     displays.push(display);
-                    addDisplayToPanel(display, panel, displays.length);
+                    addDisplayToPanel(display, panel, displays.length, true, "10");
+
+                    spawnWithCallback([ddcutil_path, "getvcp", "--brief", "12", "--bus", display_bus], function(vcpInfos) {
+                        let display = {};
+                        let ddc_supported = true;
+                        if (vcpInfos.indexOf("DDC communication failed") !== -1) {
+                            ddc_supported = false;
+                        } else {
+                            ddc_supported = true;
+                        }
+                        let vcpInfosArray = vcpInfos.trim().split(" ");
+                        let maxBrightness = vcpInfosArray[4];
+                        /* we need current brightness in the scale of 0 to 1 for slider*/
+                        let currentBrightness = vcpInfosArray[3] / vcpInfosArray[4];
+    
+                        /* make display object */
+                        display = { "bus": display_bus, "max": maxBrightness, "current": currentBrightness, "supported": ddc_supported, "name": ''};
+                        global.log('DISPLAY: ' + display.name + ' 12');
+                        displays.push(display);
+                        addDisplayToPanel(display, panel, displays.length, false, "12");
+
+                        spawnWithCallback([ddcutil_path, "getvcp", "--brief", "62", "--bus", display_bus], function(vcpInfos) {
+                            let display = {};
+                            let ddc_supported = true;
+                            if (vcpInfos.indexOf("DDC communication failed") !== -1) {
+                                ddc_supported = false;
+                            } else {
+                                ddc_supported = true;
+                            }
+                            let vcpInfosArray = vcpInfos.trim().split(" ");
+                            let maxBrightness = vcpInfosArray[4];
+                            /* we need current brightness in the scale of 0 to 1 for slider*/
+                            let currentBrightness = vcpInfosArray[3] / vcpInfosArray[4];
+        
+                            /* make display object */
+                            display = { "bus": display_bus, "max": maxBrightness, "current": currentBrightness, "supported": ddc_supported, "name": ''};
+                            global.log('DISPLAY: ' + display.name + ' 62');
+                            displays.push(display);
+                            addDisplayToPanel(display, panel, displays.length, false, "62");
+                        });               
+                    });               
                 });
+
+                /* read the current and max contrast using getvcp 12 */
+                
+                
             }
+
             if (ddc_line.indexOf("Monitor:") !== -1) {
                 /* Monitor name comes second in the output,
                  so when that is detected fill the object and push it to list */
